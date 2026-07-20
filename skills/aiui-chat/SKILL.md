@@ -1,111 +1,170 @@
 ---
 name: aiui-chat
-description: Create rich, shareable web messages on aiui.chat with a single HTTP POST. Supports standard MIME types (text/html, text/markdown, application/json, image/png, application/pdf, ...) and rich vendor types like application/vnd.aiui.chat.map+json (interactive Mapbox maps). Use when the user wants output delivered as a URL, wants to share rich content (pages, maps, images, documents) beyond the terminal, or needs asynchronous cross-channel communication.
+description: >-
+  Use in whenever the user is in need of a rich web supported message not supported by your own mime type messages such as: text/html, text/markdown (with image rendering), image/*, application/json, etc. Enables POST of data with a mime-type and return of an accessible URL for the user. Only use this skill when the aiui.chat MCP server is not connected and authorized — prefer the MCP tools when available.
 ---
 
-# aiui.chat — rich messages over a URL
+## Base URL
 
-aiui.chat is a web message bus for agents. You POST content with a MIME type;
-it returns a short URL that renders that content on the web. No API key or
-authentication is required to create a message.
+`https://aiui.chat` — but if `AIUI_URL` is set in your environment, use it as
+the base URL instead (it targets a local or staging instance; the MCP server
+noted at the bottom lives at that instance's companion MCP origin). The curl
+examples below use `${AIUI_URL:-https://aiui.chat}` so they work either way.
 
-## Creating a message
+## API
 
+```yaml
+openapi: 3.1.0
+info: { title: aiui.chat, version: "1" }
+paths:
+  /:
+    post:
+      summary: Create a message. Body is the raw content; Content-Type is its MIME type.
+      parameters:
+        - name: filename
+          in: query
+          schema: { type: string }
+          description: Download/display filename for binary blobs.
+        - name: session
+          in: query
+          schema: { type: string }
+          description: >-
+            Attach to a session you own. Requires auth — 401 without it,
+            404 if not yours; never silently ignored.
+        - name: children
+          in: query
+          schema: { type: string }
+          description: >-
+            Comma-separated ids of messages you created earlier (max 32) to
+            adopt as children of this one — use for assets this message embeds.
+            Response echoes the adopted subset as `children`.
+        - name: x-aiui-agent-session
+          in: header
+          schema: { type: string }
+          description: >-
+            Your harness's session/thread id (alias: ?agent_session=). Send it
+            whenever you have one — Claude Code hooks expose it as session_id;
+            the Agent SDK on init/result messages. Messages sharing an id
+            collect into one aiui.chat session (immediately if authenticated,
+            at claim time if anonymous). 409 if the id is already bound to
+            another user's session.
+      requestBody:
+        required: true
+        content:
+          "*/*":
+            schema:
+              description: Any standard MIME type served as-is, or a vendor type (below).
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  url: { type: string, description: The message URL — share this. }
+                  sessionId:
+                    type: [string, "null"]
+                    description: "null on anonymous creates (assigned when claimed)."
+                  children:
+                    type: array
+                    items: { type: string }
+                    description: Ids adopted via ?children= (only present when used).
+  /api/messages:
+    get:
+      summary: >-
+        List your messages, newest first (auth required — 401 otherwise). Use
+        to find existing message ids/urls to link or embed in new content.
+      parameters:
+        - { name: session, in: query, schema: { type: string } }
+        - name: agent_session
+          in: query
+          schema: { type: string }
+          description: Scope to the session your agent-session id maps to (header alias works too).
+        - name: parent
+          in: query
+          schema: { type: string }
+          description: Only children of this message.
+        - { name: limit, in: query, schema: { type: integer, default: 50, maximum: 200 } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        url: { type: string }
+                        mime: { type: string }
+                        size: { type: integer }
+                        filename: { type: [string, "null"] }
+                        textPreview: { type: [string, "null"] }
+                        sessionId: { type: [string, "null"] }
+                        parentId: { type: [string, "null"] }
+                        createdAt: { type: string }
 ```
-POST https://aiui.chat/
-Content-Type: <mime type of the body>
 
-<raw body: text, JSON, or binary>
-```
+## Embedding messages in messages
 
-Response (201):
+Messages can reference each other by URL: a `text/html` or `text/markdown`
+message renders on aiui.chat, so root-relative links to other messages
+(`<img src="/MESSAGE_ID">`, `![chart](/MESSAGE_ID)`, `<a href="/MESSAGE_ID">`)
+resolve in-page and render for the recipient. Flow:
 
-```json
-{ "id": "fh1rdgczrt", "url": "https://aiui.chat/fh1rdgczrt" }
-```
+1. POST each asset (`image/*`, etc.) first; collect the returned ids.
+2. Write the page referencing them by `/<id>` (or full URL).
+3. POST the page with `?children=<id1>,<id2>` so the assets are organized
+   under it (and into its session).
 
-Optional query parameters:
-
-- `?filename=report.pdf` — sets the download/display filename for binary blobs.
-- `?session=<sessionId>` — attaches the message to one of the user's sessions
-  (only honored on authenticated requests, e.g. via the MCP server).
-
-Examples:
+Send the same `x-aiui-agent-session` on every POST so all parts land in one
+session. Embedded assets render for whoever owns (or first claims) them — the
+same recipient who opens the page — so post page + assets for a single
+recipient; anonymous "view without signing in" viewers won't see embedded
+assets.
 
 ```bash
-# An HTML page
-curl -X POST https://aiui.chat/ -H 'content-type: text/html' \
-  --data-binary @report.html
+# HTML page, tagged with this conversation's id (recommended when known)
+curl -X POST "${AIUI_URL:-https://aiui.chat}/" -H 'content-type: text/html' \
+  -H "x-aiui-agent-session: $YOUR_SESSION_ID" --data-binary @report.html
 
-# An image
-curl -X POST "https://aiui.chat/?filename=chart.png" \
-  -H 'content-type: image/png' --data-binary @chart.png
+# Page embedding an image asset (see "Embedding messages in messages")
+IMG=$(curl -sX POST "${AIUI_URL:-https://aiui.chat}/" -H 'content-type: image/png' --data-binary @chart.png | jq -r .id)
+curl -X POST "${AIUI_URL:-https://aiui.chat}/?children=$IMG" -H 'content-type: text/html' \
+  --data-binary "<h1>Report</h1><img src=\"/$IMG\">"
 
-# An interactive map (vendor type — see below)
-curl -X POST https://aiui.chat/ \
-  -H 'content-type: application/vnd.aiui.chat.map+json' \
+# Interactive map (vendor type)
+curl -X POST "${AIUI_URL:-https://aiui.chat}/" -H 'content-type: application/vnd.aiui.chat.map+json' \
   -d '{"title":"Coffee nearby","markers":[{"coordinates":[-122.41,37.77],"label":"Office"}]}'
 ```
 
-Always give the returned `url` to the user — that URL is the message.
+## Lifecycle
 
-## Message lifecycle (important)
+- When the first user visits the URL it's claimed
+- Unclaimed messages expire 24h after creation
+- First viewer decides ownership: signed-in → claimed permanently (private to
+  them); anonymous → locked to their browser (still expires within 24h).
+  Afterwards the URL is dead for everyone else — treat URLs as single-recipient.
+- Every claimed message belongs to a session (one is created automatically if
+  none is specified)
 
-- A new message is **unclaimed and expires 24 hours after creation** if never
-  viewed.
-- The **first viewer decides ownership**: a signed-in viewer claims it
-  permanently (only they can see it afterwards); an anonymous viewer can lock
-  it to their browser instead (it still expires within the original 24h).
-- After a message is claimed or anonymously locked, the URL is dead for
-  everyone else. Treat URLs as single-recipient.
-- Messages created through the authenticated MCP server are born claimed by
-  the user and never expire.
+## Vendor types
 
-## Message types
+JSON payloads validated against a schema, rendered as an interactive React
+view. Invalid payloads still create a message but render the validation error —
+check the schema first.
 
-### Standard MIME types
-
-Any standard type is accepted and served as-is at the URL: `text/plain`,
-`text/html` (rendered as a real page), `text/markdown`, `application/json`,
-`image/png`, `image/jpeg`, `image/svg+xml`, `application/pdf`, audio/video
-types, etc. Send the raw bytes with the right `Content-Type`.
-
-### Rich vendor types
-
-Vendor types are JSON payloads validated against a schema and rendered as an
-interactive React view at the URL.
-
-| MIME type                            | Renders as                                          | Schema reference                       |
-| ------------------------------------ | --------------------------------------------------- | -------------------------------------- |
-| `application/vnd.aiui.chat.map+json` | Interactive Mapbox map with markers, popups, styles | [references/map.md](references/map.md) |
-
-Minimal map example:
-
-```json
-{
-  "title": "Coffee near the office",
-  "center": [-122.4194, 37.7749],
-  "zoom": 13,
-  "style": "streets",
-  "markers": [
-    { "coordinates": [-122.4194, 37.7749], "label": "Office" },
-    {
-      "coordinates": [-122.4077, 37.7857],
-      "label": "Sightglass Coffee",
-      "description": "Great pour-over, opens 7am",
-      "color": "#e11d48"
-    }
-  ]
-}
-```
-
-All coordinates are `[longitude, latitude]`. Invalid payloads still create a
-message, but the URL shows the validation error instead of a map — validate
-against the schema reference before sending.
+| MIME type                            | Renders as             | Schema                                 |
+| ------------------------------------ | ---------------------- | -------------------------------------- |
+| `application/vnd.aiui.chat.map+json` | Interactive Mapbox map | [references/map.md](references/map.md) |
+| `text/html`                          | A static HTML render   |                                        |
 
 ## Authenticated features (MCP)
 
-For claimed-by-default messages, sessions (organized conversations), and
-push notifications across channels (email, webhooks), connect to the MCP
-server at `https://mcp.aiui.chat/mcp` (OAuth — the user signs in with their
+Claimed-by-default messages, sessions, and push notifications (email,
+webhooks): connect to `https://mcp.aiui.chat/mcp` (OAuth with the user's
 aiui.chat account).

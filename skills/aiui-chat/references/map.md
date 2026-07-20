@@ -1,28 +1,54 @@
 # application/vnd.aiui.chat.map+json
 
-An interactive map with optional markers, rendered with Mapbox at the message
-URL.
+Interactive Mapbox map rendered at the message URL. All coordinates are
+`[longitude, latitude]` (GeoJSON order), not lat/lng.
 
-## Schema
+## JSON Schema
 
-All fields are optional unless noted.
-
-| Field     | Type                                                          | Notes                                           |
-| --------- | ------------------------------------------------------------- | ----------------------------------------------- |
-| `title`   | string                                                        | Heading shown above the map                     |
-| `center`  | `[lng, lat]`                                                  | Initial center; defaults to fitting all markers |
-| `zoom`    | number                                                        | 0–22; defaults to fitting all markers           |
-| `style`   | `"streets" \| "outdoors" \| "light" \| "dark" \| "satellite"` | Base map style                                  |
-| `markers` | Marker[]                                                      | Points to plot                                  |
-
-Marker:
-
-| Field         | Type         | Notes                                               |
-| ------------- | ------------ | --------------------------------------------------- |
-| `coordinates` | `[lng, lat]` | **required**; longitude −180..180, latitude −90..90 |
-| `label`       | string       | Short marker label                                  |
-| `description` | string       | Longer text shown in the marker popup               |
-| `color`       | string       | CSS color for the marker, e.g. `#e11d48`            |
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "title": { "type": "string", "description": "Heading shown above the map" },
+    "center": {
+      "$ref": "#/$defs/lngLat",
+      "description": "Initial center; defaults to fitting all markers"
+    },
+    "zoom": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 22,
+      "description": "Defaults to fitting all markers"
+    },
+    "style": { "enum": ["streets", "outdoors", "light", "dark", "satellite"] },
+    "markers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["coordinates"],
+        "properties": {
+          "coordinates": { "$ref": "#/$defs/lngLat" },
+          "label": { "type": "string", "description": "Short marker label" },
+          "description": { "type": "string", "description": "Popup text" },
+          "color": { "type": "string", "description": "CSS color, e.g. #e11d48" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "lngLat": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "number", "minimum": -180, "maximum": 180 },
+        { "type": "number", "minimum": -90, "maximum": 90 }
+      ],
+      "minItems": 2,
+      "maxItems": 2
+    }
+  }
+}
+```
 
 ## Example
 
@@ -43,6 +69,3 @@ Marker:
   ]
 }
 ```
-
-Remember: coordinates are `[longitude, latitude]` (GeoJSON order), not
-lat/lng.
