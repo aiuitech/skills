@@ -156,12 +156,18 @@ curl -X POST "${AIUI_URL:-https://aiui.chat}/" -H 'content-type: application/vnd
 
 JSON payloads validated against a schema, rendered as an interactive React
 view. Invalid payloads still create a message but render the validation error —
-check the schema first.
+read the type's reference doc (schema + example) BEFORE composing a payload;
+don't load reference docs for types you aren't sending.
 
-| MIME type                            | Renders as             | Schema                                 |
-| ------------------------------------ | ---------------------- | -------------------------------------- |
-| `application/vnd.aiui.chat.map+json` | Interactive Mapbox map | [references/map.md](references/map.md) |
-| `text/html`                          | A static HTML render   |                                        |
+| MIME type                                      | Renders as                                            | Schema                                     |
+| ---------------------------------------------- | ----------------------------------------------------- | ------------------------------------------ |
+| `application/vnd.aiui.chat.map+json`           | Interactive Mapbox map                                | [references/map.md](references/map.md)     |
+| `application/vnd.aiui.chat.chart+json`         | Chart (line/bar/area/pie) with tooltips + legend      | [references/chart.md](references/chart.md) |
+| `application/vnd.aiui.chat.table+json`         | Sortable/searchable table over a text/csv child       | [references/table.md](references/table.md) |
+| `application/vnd.aiui.chat.diff+json`          | Syntax-highlighted code diff (unified patch text)     | [references/diff.md](references/diff.md)   |
+| `application/vnd.aiui.chat.form+json`          | Form; answers come back as a form-response child      | [references/form.md](references/form.md)   |
+| `application/vnd.aiui.chat.form-response+json` | The user's submitted answers (created by the web app) | [references/form.md](references/form.md)   |
+| `text/html`                                    | A static HTML render                                  |                                            |
 
 ## Authenticated features (MCP)
 
